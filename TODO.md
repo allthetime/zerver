@@ -114,3 +114,38 @@ Define a binary protocol. Do not use strings. Use Little Endian for all numbers.
 
 
 https://www.youtube.com/watch?v=hEIBsqP63Pg
+
+
+
+
+
+
+
+
+
+2. Can we avoid the copy?
+
+Yes! If you want maximum performance and are willing to write slightly more complex code, you can use Vectored Processing.
+
+Instead of peek, you would implement getReadSlices(), which returns the two physical segments currently holding your data:
+Code snippet
+
+pub fn getReadSlices(self: *const Self) [2][]u8 {
+    const length = self.len();
+    if (length == 0) return .{ &[_]u8{}, &[_]u8{} };
+
+    if (self.read_idx + length <= size) {
+        // Data is in one continuous chunk
+        return .{ self.data[self.read_idx .. self.read_idx + length], &[_]u8{} };
+    } else {
+        // Data is split
+        return .{ self.data[self.read_idx..size], self.data[0 .. (self.read_idx + length) % size] };
+    }
+}
+
+The Catch: If you use this, you have to handle "The Split" in every function. For example, a findDelimiter function would have to search slices[0], and if it doesn't find it, then search slices[1].
+3. When to use which?
+
+    Use @memcpy (Current way): When you are dealing with small messages (like strings or small JSON objects). The CPU is incredibly fast at memcpy, and the simplicity of having a flat []u8 slice saves you from a ton of bugs.
+
+    Use Direct Slices: When you are building a high-throughput proxy or a file-server where you are moving megabytes of data and every CPU cycle spent copying is a wasted cycle.
