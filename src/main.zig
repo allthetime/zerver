@@ -11,8 +11,6 @@ const PORT = 8083;
 // https://github.com/Dg0230/libxev-http/blob/main/src/lib.zig
 //
 
-// Global variable for simplicity in this specific example,
-// though passing a context struct is usually preferred.
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
@@ -23,7 +21,10 @@ const Client = struct {
     read_c: xev.Completion = undefined,
     close_c: xev.Completion = undefined,
     write_c: xev.Completion = undefined, // Added for future broadcasting
+
 };
+
+const Server = *xev.TCP;
 
 pub fn main() !void {
     defer {
@@ -46,7 +47,7 @@ pub fn main() !void {
 }
 
 fn acceptCallback(
-    userdata: ?*xev.TCP,
+    userdata: ?TCPServer,
     loop: *xev.Loop,
     completion: *xev.Completion,
     result: xev.AcceptError!xev.TCP,

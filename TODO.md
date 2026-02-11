@@ -108,3 +108,9 @@ Define a binary protocol. Do not use strings. Use Little Endian for all numbers.
 - [ ] Use `tcp_server.accept` error handling to prevent server crash on connection failures.
 - [ ] Ensure Client is removed from HashMap and `allocator.destroy(client)` is called on TCP disconnect.
 - [ ] Ensure `client.write_queue` is freed in `closeCallback`.
+
+
+
+
+
+https://www.youtube.com/watch?v=hEIBsqP63Pg
