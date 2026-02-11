@@ -27,8 +27,13 @@ const Client = struct {
 
     write_c: xev.Completion = undefined, // Added for future broadcasting
     write_buf: [4096]u8 = undefined, // Buffer to hold the outgoing message
-
+    is_writing: bool = false, // To track if a write is in progress
     close_c: xev.Completion = undefined,
+
+    send_queue: [16][]u8 = undefined,
+    queue_read: usize = 0,
+    queue_write: usize = 0,
+    queue_len: usize = 0,
 };
 
 pub fn main() !void {
@@ -164,39 +169,79 @@ fn broadcast(sender: *Client, message: []const u8, loop: *xev.Loop) void {
     defer clients_mutex.unlock();
 
     for (clients.items) |recipient| {
-        // Option: Don't send the message back to the person who sent it
         if (recipient == sender) continue;
 
-        // Copy message to recipient's write buffer
-        const safe_len = @min(message.len, recipient.write_buf.len);
-        @memcpy(recipient.write_buf[0..safe_len], message[0..safe_len]);
+        // 1. Allocate memory for this specific broadcast message
+        // (so it doesn't disappear when the sender's buffer changes)
+        const msg_copy = allocator.alloc(u8, message.len) catch continue;
+        @memcpy(msg_copy, message);
 
-        // Trigger the async write
-        recipient.conn.write(
-            loop, // You'll need access to the loop
-            &recipient.write_c,
-            .{ .slice = recipient.write_buf[0..safe_len] },
-            Client,
-            recipient,
-            writeCallback,
-        );
+        // 2. Push to recipient queue
+        if (recipient.queue_len >= recipient.send_queue.len) {
+            allocator.free(msg_copy); // Queue full, drop message
+            continue;
+        }
+
+        recipient.send_queue[recipient.queue_write] = msg_copy;
+        recipient.queue_write = (recipient.queue_write + 1) % recipient.send_queue.len;
+        recipient.queue_len += 1;
+
+        // 3. If not busy, start the engine
+        if (!recipient.is_writing) {
+            writeNext(recipient, loop);
+        }
     }
 }
 
+fn writeNext(client: *Client, loop: *xev.Loop) void {
+    if (client.queue_len == 0) {
+        client.is_writing = false;
+        return;
+    }
+
+    client.is_writing = true;
+    const next_msg = client.send_queue[client.queue_read];
+
+    client.conn.write(
+        loop,
+        &client.write_c,
+        .{ .slice = next_msg },
+        Client,
+        client,
+        writeCallback,
+    );
+}
+
 fn writeCallback(
-    _: ?*Client,
-    _: *xev.Loop,
+    ud: ?*Client,
+    loop: *xev.Loop,
     _: *xev.Completion,
     _: xev.TCP,
     _: xev.WriteBuffer,
     res: xev.WriteError!usize,
 ) xev.CallbackAction {
+    const client = ud.?;
+
+    // 1. Clean up the message we just sent
+    const finished_msg = client.send_queue[client.queue_read];
+    allocator.free(finished_msg);
+
+    // 2. Advance queue
+    client.queue_read = (client.queue_read + 1) % client.send_queue.len;
+    client.queue_len -= 1;
+
     _ = res catch |err| {
-        std.debug.print("Broadcast write error: {}\n", .{err});
+        std.debug.print("Write error: {}\n", .{err});
+        // On error, maybe stop writing
+        client.is_writing = false;
+        return .disarm;
     };
+
+    // 3. Keep the chain going if there are more messages
+    writeNext(client, loop);
+
     return .disarm;
 }
-
 fn closeClient(loop: *xev.Loop, client: *Client) void {
     client.conn.close(loop, &client.close_c, Client, client, closeCallback);
 }
@@ -209,6 +254,12 @@ fn closeCallback(
     _: xev.CloseError!void,
 ) xev.CallbackAction {
     if (ud) |client| {
+        while (client.queue_len > 0) {
+            allocator.free(client.send_queue[client.queue_read]);
+            client.queue_read = (client.queue_read + 1) % client.send_queue.len;
+            client.queue_len -= 1;
+        }
+
         allocator.destroy(client); // Match the allocator used in acceptCallback
         clients_mutex.lock();
         for (clients.items, 0..) |c, i| {
