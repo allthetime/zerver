@@ -180,7 +180,7 @@ fn udpReadCallback(
     _: *xev.Completion,
     _: *xev.UDP.State,
     addr: std.net.Address,
-    _: xev.UDP, // <--- THIS WAS MISSING
+    _: xev.UDP,
     buf: xev.ReadBuffer,
     res: xev.ReadError!usize,
 ) xev.CallbackAction {
@@ -195,19 +195,19 @@ fn udpReadCallback(
     clients_mutex.lock();
     defer clients_mutex.unlock();
 
-    // std.debug.print("Received UDP from {any}: {s}\n", .{ addr, data });
-
     if (udp_map.get(addr)) |client| {
-        // A MovePacket is 17 bytes: 8 (ID) + 1 (Type) + 4 (X) + 4 (Y)
         client.last_udp_ts = std.time.milliTimestamp();
+
+        // Use @sizeOf to ensure we have enough bytes for the struct
         if (data.len >= @sizeOf(MovePacket)) {
-            // This is the "magic" line: we treat the bytes as a struct
-            const packet = @as(*const MovePacket, @ptrCast(@alignCast(data.ptr)));
+            // FIX: Create a local, aligned struct and copy bytes into it
+            var packet: MovePacket = undefined;
+            @memcpy(std.mem.asBytes(&packet), data[0..@sizeOf(MovePacket)]);
 
             if (packet.type == .move) {
                 std.debug.print("Player {d} moved: X:{d:.2} Y:{d:.2}\n", .{ client.id, packet.x, packet.y });
 
-                // Broadcast the entire 17-byte binary packet to everyone else
+                // Broadcast the original raw bytes to others
                 broadcastUdp(client, data[0..@sizeOf(MovePacket)], loop);
             }
 
@@ -218,7 +218,9 @@ fn udpReadCallback(
             }
         }
     } else if (data.len >= 8) {
+        // FIX: Use readInt to safely extract the u64 ID from potentially unaligned bytes
         const claimed_id = std.mem.readInt(u64, data[0..8], .little);
+
         for (clients.items) |client| {
             if (client.id == claimed_id) {
                 client.udp_address = addr;
@@ -295,7 +297,8 @@ fn acceptCallback(
     client.* = .{
         .conn = client_connection,
         .rb = RingBuffer(4096){},
-        .id = next_player_id, // Assign the ID
+        .id = next_player_id, // Assign the IDid_msg
+        .last_udp_ts = std.time.milliTimestamp(),
     };
     std.debug.print("Player {d} connected via TCP\n", .{client.id});
 

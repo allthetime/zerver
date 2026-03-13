@@ -100,4 +100,36 @@ pub fn build(b: *std.Build) void {
     //
     // Lastly, the Zig build system is relatively simple and self-contained,
     // and reading its source code will allow you to master it.
+    //
+    //
+    //
+    //
+
+    // --- Client Artifact ---
+    const client_exe = b.addExecutable(.{
+        .name = "client",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/client.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "server", .module = mod },
+            },
+        }),
+    });
+
+    // Add xev dependency to the client
+    client_exe.root_module.addImport("xev", xev.module("xev"));
+
+    b.installArtifact(client_exe);
+
+    // --- Client Run Step ---
+    const run_client_cmd = b.addRunArtifact(client_exe);
+    const client_run_step = b.step("client", "Run the test client");
+    client_run_step.dependOn(&run_client_cmd.step);
+
+    // Allow passing args: zig build client -- 127.0.0.1 8083
+    if (b.args) |args| {
+        run_client_cmd.addArgs(args);
+    }
 }

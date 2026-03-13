@@ -81,7 +81,10 @@ pub fn main() !void {
         var recv_buf: [1024]u8 = undefined;
         if (posix.recvfrom(udp_fd, &recv_buf, 0, null, null)) |n| {
             if (n >= @sizeOf(MovePacket)) {
-                const p = @as(*const MovePacket, @ptrCast(@alignCast(&recv_buf)));
+                // const p = @as(*const MovePacket, @ptrCast(@alignCast(&recv_buf)));
+                // std.debug.print("BROADCAST: Player {d} is at {d:.2}, {d:.2}\n", .{ p.id, p.x, p.y });
+                var p: MovePacket = undefined;
+                @memcpy(std.mem.asBytes(&p), recv_buf[0..@sizeOf(MovePacket)]);
                 std.debug.print("BROADCAST: Player {d} is at {d:.2}, {d:.2}\n", .{ p.id, p.x, p.y });
             }
         } else |_| {}
